@@ -1,0 +1,26 @@
+accessWidener v2 official
+# The world is rendered into an internal-resolution target by swapping this field for the duration of the world phase.
+accessible field net/minecraft/client/renderer/GameRenderer mainRenderTarget Lcom/mojang/blaze3d/pipeline/RenderTarget;
+mutable field net/minecraft/client/renderer/GameRenderer mainRenderTarget Lcom/mojang/blaze3d/pipeline/RenderTarget;
+accessible field net/minecraft/client/renderer/GameRenderer levelProjectionMatrixBuffer Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;
+# Reach Minecraft's real Vulkan device/encoder to insert our compute work in its submission stream.
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanCommandEncoder device Lcom/mojang/renderpearl/backend/vulkan/VulkanDevice;
+# Batched presentation (FG x3): present the generated frames out of the real frame's single submit with our own acquire semaphores.
+accessible field com/mojang/renderpearl/frontend/FrontendGpuSurface backend Lcom/mojang/renderpearl/backend/api/GpuSurfaceBackend;
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface swapchain J
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface surface J
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface device Lcom/mojang/renderpearl/backend/vulkan/VulkanDevice;
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface acquireSemaphores [J
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface currentAcquireSemaphore I
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface currentImageIndex I
+mutable field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface currentImageIndex I
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface swapchainOutOfDate Z
+mutable field com/mojang/renderpearl/backend/vulkan/VulkanGpuSurface swapchainOutOfDate Z
+# Particle motion vectors (session 10): the quad particles' current and previous positions, size and alpha.
+accessible field net/minecraft/client/particle/Particle x D
+accessible field net/minecraft/client/particle/Particle y D
+accessible field net/minecraft/client/particle/Particle z D
+accessible field net/minecraft/client/particle/Particle xo D
+accessible field net/minecraft/client/particle/Particle yo D
+accessible field net/minecraft/client/particle/Particle zo D
+accessible field net/minecraft/client/particle/SingleQuadParticle alpha F

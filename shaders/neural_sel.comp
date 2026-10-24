@@ -1,0 +1,83 @@
+#version 450
+// Neural corrector (EXPERIMENTAL): fused 4-layer 3x3 CNN that picks, per pixel, one of six candidates {G, A, B, C0, C1, blend} (softmax weights, tau baked into the logit rows).
+// One 16x16 tile per workgroup: input window 24x24 (halo 4) -> L1 (22x22) -> L2 (20x20) -> L3 (18x18) -> L4 (16x16 logits) -> mix. Activations live in shared memory, weights in a storage buffer
+// (uniform indices: scalar loads). Zero padding at the image border exactly like the PyTorch reference (activations outside the image are forced to 0 after every layer).
+// Channel order of the 22 input features = tools/ai/neural/dataset.py: G, A, B, C0, C1 (rgb), F (3), M (3), t.
+#ifndef C
+#define C 16
+#endif
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0) uniform sampler2D uG;
+layout(set = 0, binding = 1) uniform sampler2D uA;
+layout(set = 0, binding = 2) uniform sampler2D uB;
+layout(set = 0, binding = 3) uniform sampler2D uC0;
+layout(set = 0, binding = 4) uniform sampler2D uC1;
+layout(set = 0, binding = 5) uniform sampler2D uF;
+layout(set = 0, binding = 6) uniform sampler2D uM;
+layout(std430, set = 0, binding = 7) readonly buffer Wt { float w[]; };
+layout(set = 0, binding = 8, rgba8) uniform writeonly image2D outImg;
+layout(std430, set = 0, binding = 9) readonly buffer Tiles { uint tileFlag[]; };   // one uint per 16x16 tile (1 = run the network), only read when useTiles != 0
+layout(push_constant) uniform PC { int dw, dh, tilesX; float t; int useTiles; int pad0; int pad1; int pad2; } pc;
+const int O1 = 0, B1 = C * 22 * 9, O2 = B1 + C, B2 = O2 + C * C * 9, O3 = B2 + C, B3 = O3 + C * C * 9, O4 = B3 + C, B4 = O4 + 6 * C * 9;
+shared float bufA[C * 484];
+shared float bufB[C * 400];
+bool inside(ivec2 p) { return p.x >= 0 && p.y >= 0 && p.x < pc.dw && p.y < pc.dh; }
+void main() {
+    ivec2 tile = ivec2(gl_WorkGroupID.xy); ivec2 org = tile * 16; int lid = int(gl_LocalInvocationIndex); ivec2 lp = ivec2(gl_LocalInvocationID.xy);
+    if (pc.useTiles != 0) {   // skip tiles without suspicious pixels (also the 8 neighbours: the halo reads them): the output is G there
+        bool any = false; for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) { ivec2 q = tile + ivec2(dx, dy); if (q.x >= 0 && q.y >= 0 && q.x < pc.tilesX && q.y < (pc.dh + 15) / 16 && tileFlag[q.y * pc.tilesX + q.x] != 0u) any = true; }
+        if (!any) { ivec2 p = org + lp; if (inside(p)) imageStore(outImg, p, vec4(texelFetch(uG, p, 0).rgb, 1.0)); return; }
+    }
+    // ---- L1: 22 inputs -> C, positions 22x22 around the tile (offset -3)
+    for (int pos = lid; pos < 484; pos += 256) {
+        ivec2 gp = org + ivec2(pos % 22, pos / 22) - 3; float acc[C];
+        for (int o = 0; o < C; ++o) acc[o] = w[B1 + o];
+        if (inside(gp)) {
+            for (int tap = 0; tap < 9; ++tap) {
+                ivec2 q = gp + ivec2(tap % 3 - 1, tap / 3 - 1); if (!inside(q)) continue;
+                float v[22]; vec3 g = texelFetch(uG, q, 0).rgb, a = texelFetch(uA, q, 0).rgb, b = texelFetch(uB, q, 0).rgb, c0 = texelFetch(uC0, q, 0).rgb, c1 = texelFetch(uC1, q, 0).rgb, f = texelFetch(uF, q, 0).rgb, m = texelFetch(uM, q, 0).rgb;
+                v[0] = g.r; v[1] = g.g; v[2] = g.b; v[3] = a.r; v[4] = a.g; v[5] = a.b; v[6] = b.r; v[7] = b.g; v[8] = b.b; v[9] = c0.r; v[10] = c0.g; v[11] = c0.b; v[12] = c1.r; v[13] = c1.g; v[14] = c1.b;
+                v[15] = f.r; v[16] = f.g; v[17] = f.b; v[18] = m.r; v[19] = m.g; v[20] = m.b; v[21] = pc.t;
+                for (int o = 0; o < C; ++o) { float s = 0.0; for (int c = 0; c < 22; ++c) s += v[c] * w[O1 + (o * 22 + c) * 9 + tap]; acc[o] += s; }
+            }
+        }
+        bool in1 = inside(gp);
+        for (int o = 0; o < C; ++o) bufA[o * 484 + pos] = in1 ? max(acc[o], 0.0) : 0.0;
+    }
+    barrier();
+    // ---- L2: C -> C, positions 20x20 (offset -2); reads bufA (22x22 window with offset +1)
+    for (int pos = lid; pos < 400; pos += 256) {
+        ivec2 lq = ivec2(pos % 20, pos / 20); ivec2 gp = org + lq - 2; float acc[C];
+        for (int o = 0; o < C; ++o) acc[o] = w[B2 + o];
+        for (int tap = 0; tap < 9; ++tap) {
+            int src = (lq.y + tap / 3) * 22 + (lq.x + tap % 3);   // L1 index of the tap: L1 local = L2 local + 1 + (dx, dy)
+            for (int c = 0; c < C; ++c) { float x = bufA[c * 484 + src]; for (int o = 0; o < C; ++o) acc[o] += x * w[O2 + (o * C + c) * 9 + tap]; }
+        }
+        bool in2 = inside(gp);
+        for (int o = 0; o < C; ++o) bufB[o * 400 + pos] = in2 ? max(acc[o], 0.0) : 0.0;
+    }
+    barrier();
+    // ---- L3: C -> C, positions 18x18 (offset -1); reads bufB, writes bufA (finished being read by L2: barrier above)
+    for (int pos = lid; pos < 324; pos += 256) {
+        ivec2 lq = ivec2(pos % 18, pos / 18); ivec2 gp = org + lq - 1; float acc[C];
+        for (int o = 0; o < C; ++o) acc[o] = w[B3 + o];
+        for (int tap = 0; tap < 9; ++tap) {
+            int src = (lq.y + tap / 3) * 20 + (lq.x + tap % 3);
+            for (int c = 0; c < C; ++c) { float x = bufB[c * 400 + src]; for (int o = 0; o < C; ++o) acc[o] += x * w[O3 + (o * C + c) * 9 + tap]; }
+        }
+        bool in3 = inside(gp);
+        for (int o = 0; o < C; ++o) bufA[o * 324 + pos] = in3 ? max(acc[o], 0.0) : 0.0;
+    }
+    barrier();
+    // ---- L4: C -> 6 logits for the 16x16 core, then the candidate mix
+    ivec2 p = org + lp; if (!inside(p)) return;
+    float lg[6]; for (int o = 0; o < 6; ++o) lg[o] = w[B4 + o];
+    for (int tap = 0; tap < 9; ++tap) {
+        int src = (lp.y + tap / 3) * 18 + (lp.x + tap % 3);
+        for (int c = 0; c < C; ++c) { float x = bufA[c * 324 + src]; for (int o = 0; o < 6; ++o) lg[o] += x * w[O4 + (o * C + c) * 9 + tap]; }
+    }
+    float mx = max(max(max(lg[0], lg[1]), max(lg[2], lg[3])), max(lg[4], lg[5])); float e[6], se = 0.0; for (int o = 0; o < 6; ++o) { e[o] = exp(lg[o] - mx); se += e[o]; }
+    vec3 g = texelFetch(uG, p, 0).rgb, a = texelFetch(uA, p, 0).rgb, b = texelFetch(uB, p, 0).rgb, c0 = texelFetch(uC0, p, 0).rgb, c1 = texelFetch(uC1, p, 0).rgb;
+    vec3 outc = (e[0] * g + e[1] * a + e[2] * b + e[3] * c0 + e[4] * c1 + e[5] * ((1.0 - pc.t) * c0 + pc.t * c1)) / se;
+    imageStore(outImg, p, vec4(clamp(outc, 0.0, 1.0), 1.0));
+}

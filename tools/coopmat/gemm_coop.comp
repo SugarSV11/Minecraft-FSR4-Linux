@@ -1,0 +1,26 @@
+#version 450
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+#extension GL_KHR_shader_subgroup_basic : enable
+// C[M x N] (f32) = A[M x K] (f16) * B[K x N] (f16); one subgroup computes one 16x16 output tile with VK_KHR_cooperative_matrix (f16 x f16 -> f32).
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer A { float16_t a[]; };
+layout(set = 0, binding = 1) readonly buffer B { float16_t b[]; };
+layout(set = 0, binding = 2) writeonly buffer C { float c[]; };
+layout(push_constant) uniform P { uint M, N, K; } p;
+void main() {
+    uint tilesN = p.N / 16;
+    uint tile = gl_WorkGroupID.x * gl_NumSubgroups + gl_SubgroupID;
+    uint tm = tile / tilesN, tn = tile % tilesN;
+    if (tm * 16 >= p.M) return;
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    for (uint k = 0; k < p.K; k += 16) {
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> ma;
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> mb;
+        coopMatLoad(ma, a, tm * 16 * p.K + k, p.K, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(mb, b, k * p.N + tn * 16, p.N, gl_CooperativeMatrixLayoutRowMajor);
+        acc = coopMatMulAdd(ma, mb, acc);
+    }
+    coopMatStore(acc, c, tm * 16 * p.N + tn * 16, p.N, gl_CooperativeMatrixLayoutRowMajor);
+}

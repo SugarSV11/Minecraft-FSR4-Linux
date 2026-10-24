@@ -1,0 +1,172 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+	id 'maven-publish'
+}
+
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+
+def bootstrapPrefix = 'dev/fsr4linux/bootstrap/'
+def bootstrapSource = file('src/main/resources/' + bootstrapPrefix)
+def generatedBootstrap = layout.buildDirectory.dir('generated/bootstrap')
+def nativeArtifacts = [
+    'libfsr4linux.so': file('../build/lib/libfsr4linux.so'),
+    'fsr4_bridge.exe': file('../build/probe/fsr4_bridge.exe'),
+    'amd_fidelityfx_loader_dx12.dll': file('../build/probe/amd_fidelityfx_loader_dx12.dll'),
+    'amd_fidelityfx_upscaler_dx12.dll': file('../build/probe/amd_fidelityfx_upscaler_dx12.dll')
+]
+def sha256Bytes = { byte[] bytes -> MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString() }
+
+tasks.register('buildNativeArtifacts', Exec) {
+    workingDir file('..')
+    commandLine 'bash', 'scripts/build-native.sh'
+}
+
+tasks.register('prepareBundledResources') {
+    dependsOn tasks.named('buildNativeArtifacts')
+    inputs.files(nativeArtifacts.values())
+    inputs.dir(bootstrapSource)
+    outputs.dir(generatedBootstrap)
+    doLast {
+        def destination = generatedBootstrap.get().asFile
+        project.delete(destination)
+        def resourceDir = new File(destination, bootstrapPrefix)
+        resourceDir.mkdirs()
+        nativeArtifacts.each { name, artifact ->
+            if (!artifact.isFile()) throw new RuntimeException("Missing native artifact: ${artifact}; run scripts/build-native.sh")
+            // Keep source resources in step with the native build so IDE and Gradle see the same bytes.
+            def source = new File(bootstrapSource, name)
+            if (!source.isFile() || !Arrays.equals(source.bytes, artifact.bytes)) {
+                source.bytes = artifact.bytes
+            }
+        }
+        def files = bootstrapSource.listFiles().findAll { it.isFile() && it.name != 'SHA256SUMS' }.sort { it.name }
+        if (files.size() != 7) throw new RuntimeException("Expected exactly seven bootstrap resources, found ${files*.name}")
+        files.each { file -> new File(resourceDir, file.name).bytes = file.bytes }
+        new File(resourceDir, 'SHA256SUMS').text = files.collect { file ->
+            "${sha256Bytes(file.bytes)}  ${file.name}\n"
+        }.join('')
+    }
+}
+
+tasks.register('verifyBundledJar') {
+    dependsOn tasks.named('jar')
+    doLast {
+        def jarFile = tasks.named('jar').get().archiveFile.get().asFile
+        new ZipFile(jarFile).withCloseable { zip ->
+            def manifest = zip.getEntry(bootstrapPrefix + 'SHA256SUMS')
+            if (manifest == null) throw new RuntimeException('Bootstrap SHA256SUMS missing from JAR')
+            def lines = zip.getInputStream(manifest).text.readLines()
+            def names = [] as Set
+            lines.each { line ->
+                def match = line =~ /^([0-9a-f]{64})  ([^\/]+)$/
+                if (!match.matches()) throw new RuntimeException("Invalid bootstrap manifest line: ${line}")
+                def name = match[0][2]
+                if (!names.add(name)) throw new RuntimeException("Duplicate bootstrap resource: ${name}")
+                def entry = zip.getEntry(bootstrapPrefix + name)
+                if (entry == null || sha256Bytes(zip.getInputStream(entry).bytes) != match[0][1])
+                    throw new RuntimeException("Bootstrap JAR integrity failure: ${name}")
+            }
+            def actual = zip.entries().findAll { !it.directory && it.name.startsWith(bootstrapPrefix) && it.name != bootstrapPrefix + 'SHA256SUMS' }
+                .collect { it.name.substring(bootstrapPrefix.length()) } as Set
+            if (actual != names) throw new RuntimeException("Bootstrap manifest coverage mismatch: ${actual - names}, ${names - actual}")
+        }
+    }
+}
+
+tasks.named('jar') { dependsOn tasks.named('prepareBundledResources') }
+tasks.named('check') { dependsOn tasks.named('verifyBundledJar') }
+tasks.named('remapJar') { dependsOn tasks.named('verifyBundledJar') }
+
+repositories {
+	// Add repositories to retrieve artifacts from in here.
+	// You should only use this when depending on other mods because
+	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
+	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
+	// for more information about repositories.
+}
+
+loom {
+	accessWidenerPath = file("src/main/resources/fsr4linux.accesswidener")
+	splitEnvironmentSourceSets()
+
+	mods {
+		"fsr4linux" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+dependencies {
+	testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+	// To change the versions see the gradle.properties file
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+	// Fabric API. This is technically optional, but you probably want it anyway.
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+sourceSets.main.resources.exclude 'dev/fsr4linux/bootstrap/**'
+
+processResources {
+	dependsOn tasks.named('prepareBundledResources')
+	from(generatedBootstrap)
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+java {
+	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
+	// if it is present.
+	// If you remove this line, sources will not be generated.
+	withSourcesJar()
+
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	from("../LICENSE") { rename { "${it}_fsr4linux" } }
+}
+
+// configure the maven publication
+publishing {
+	publications {
+		create("mavenJava", MavenPublication) {
+			from components.java
+		}
+	}
+
+	// See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
+	repositories {
+		// Add repositories to publish to here.
+		// Notice: This block does NOT have the same function as the block in the top level.
+		// The repositories here will be used for publishing your artifact, not for
+		// retrieving dependencies.
+	}
+}
+
+// Prints the client runtime classpath so scripts/run-client.sh can launch Minecraft with the HOST JDK 25
+// and host Mesa/RADV (the toolbox only compiles; its Mesa is not the system driver under test).
+def clientRuntimeCp = sourceSets.client.runtimeClasspath
+tasks.register('printRunClasspath') {
+	doLast {
+		println "CLASSPATH=" + clientRuntimeCp.asPath
+	}
+}
+
+test {
+	useJUnitPlatform()
+	testLogging { events 'passed', 'failed'; exceptionFormat = 'full' }
+}

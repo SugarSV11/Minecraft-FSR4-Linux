@@ -1,0 +1,34 @@
+{
+ "disocclusion": {
+  "shader_psnr": 34.837039947509766,
+  "net_psnr": 34.836856842041016,
+  "blend_psnr": 25.368192672729492,
+  "shader_ssim": 0.9806895891825358,
+  "net_ssim": 0.9839060405890147,
+  "frames": 30
+ },
+ "transparency": {
+  "shader_psnr": 36.29509735107422,
+  "net_psnr": 36.2945442199707,
+  "blend_psnr": 28.94239044189453,
+  "shader_ssim": 0.9774695376555125,
+  "net_ssim": 0.9811319887638092,
+  "frames": 30
+ },
+ "particles": {
+  "shader_psnr": 21.757654190063477,
+  "net_psnr": 21.75896453857422,
+  "blend_psnr": 21.62120819091797,
+  "shader_ssim": 0.8538583815097809,
+  "net_ssim": 0.8528890709082285,
+  "frames": 30
+ },
+ "_cost": {
+  "C": 24,
+  "layers": 6,
+  "loss": "mse",
+  "params": 23667,
+  "GMAC_per_frame_1080p": 48.8208384,
+  "GFLOP_per_frame_1080p": 97.6416768
+ }
+}

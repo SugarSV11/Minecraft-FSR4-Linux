@@ -1,0 +1,30 @@
+{
+	"schemaVersion": 1,
+	"id": "fsr4linux",
+	"version": "${version}",
+	"name": "FSR Upscaling for Linux (FSR4 Linux)",
+	"description": "Temporal upscaling for Minecraft's Vulkan renderer on Linux. Backends are only enabled when they demonstrably run; FSR 4.1.1 is never shown as active unless the official AMD implementation executed.",
+	"authors": [
+		"FSR4-Linux contributors"
+	],
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"dev.fsr4linux.client.Fsr4LinuxClient"
+		]
+	},
+	"mixins": [
+		{
+			"config": "fsr4linux.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"accessWidener": "fsr4linux.accesswidener"
+}

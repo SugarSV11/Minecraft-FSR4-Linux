@@ -1,0 +1,94 @@
+#version 450
+// FG x3 (EXPERIMENTAL, own backend - not AMD FG): intermediate frame at time t in (0,1) between the previous real frame F0 and the current real frame F1.
+// Same algorithm as tools/fgx3/fgx3.comp (measured there), but reading Minecraft's planes: world colour WITHOUT HUD (display res), depth + motion vectors at render res
+// (mv = prev - cur in render pixels, plane-row convention), final colour WITH HUD used only to keep the UI of F1 untouched (pixels where final != world-only).
+// mode 0 clear | 1 splat nearest depth per target pixel (atomicMax) | 2 record the winning source pixel | 3 resolve (+ hole fill from the background neighbour, + UI).
+#ifdef INT64
+// INT64 variant (session 10): depth and source id share ONE 64-bit atomicMax (key = depthBits << 32 | (idx + 1)), which merges the "splat depth" and "record winner id" passes and
+// makes the winner of equal depths deterministic (largest id). Needs shaderBufferInt64Atomics (enabled on Minecraft's device by the mod when the GPU supports it).
+#extension GL_EXT_shader_atomic_int64 : require
+#extension GL_ARB_gpu_shader_int64 : require
+#endif
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D hudCur;     // F1 world-only colour (linear filtering)
+layout(set = 0, binding = 1) uniform sampler2D hudPrev;    // F0 world-only colour (linear filtering)
+layout(set = 0, binding = 2) uniform sampler2D depthCur;   // F1 depth (reversed-Z, R32F), render res
+layout(set = 0, binding = 3) uniform sampler2D depthPrev;  // F0 depth
+layout(set = 0, binding = 4) uniform sampler2D mvCur;      // F1 motion vectors, render res
+layout(set = 0, binding = 5) uniform sampler2D finalCur;   // F1 final colour incl. HUD (display res)
+#ifdef INT64
+layout(std430, set = 0, binding = 6) buffer Z64 { uint64_t zid[]; };
+layout(std430, set = 0, binding = 7) buffer ID_unused { uint idbuf_unused[]; };
+uint srcId(int i) { uint64_t v = zid[i]; return v == 0ul ? 0xFFFFFFFFu : uint(v & 0xFFFFFFFFul) - 1u; }
+#else
+layout(std430, set = 0, binding = 6) buffer Z { uint zbuf[]; };
+layout(std430, set = 0, binding = 7) buffer ID { uint idbuf[]; };
+uint srcId(int i) { return idbuf[i]; }
+#endif
+layout(set = 0, binding = 8, rgba8) uniform writeonly image2D outImg;
+layout(push_constant) uniform PC { int dw, dh, rw, rh; int mode; float t; int pad0, pad1; } pc;
+ivec2 rp(ivec2 p) { return min(ivec2((vec2(p) + 0.5) * vec2(pc.rw, pc.rh) / vec2(pc.dw, pc.dh)), ivec2(pc.rw - 1, pc.rh - 1)); }
+vec2 mvAt(ivec2 p) { return texelFetch(mvCur, rp(p), 0).xy * vec2(pc.dw, pc.dh) / vec2(pc.rw, pc.rh) * vec2(1.0, (pc.pad0 & 1) != 0 ? -1.0 : 1.0); }   // display-pixel units
+float dCur(ivec2 p) { return texelFetch(depthCur, rp(p), 0).r; }
+float dPrev(vec2 c) { return texelFetch(depthPrev, rp(clamp(ivec2(floor(c)), ivec2(0), ivec2(pc.dw - 1, pc.dh - 1))), 0).r; }
+vec4 fetch(sampler2D s, vec2 c) { return texture(s, c / vec2(pc.dw, pc.dh)); }
+bool consistent(float a, float b) { return abs(a - b) <= 0.15 * max(a, b) + 1e-7; }
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy); if (p.x >= pc.dw || p.y >= pc.dh) return; int idx = p.y * pc.dw + p.x;
+#ifdef INT64
+    if (pc.mode == 0) { zid[idx] = 0ul; return; }
+    if (pc.mode == 1) {   // splat: nearest source pixel per target pixel, depth in the high word
+        ivec2 q = ivec2(floor(vec2(p) + 0.5 + (1.0 - pc.t) * mvAt(p)));
+        if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(pc.dw, pc.dh)))) return;
+        atomicMax(zid[q.y * pc.dw + q.x], (uint64_t(floatBitsToUint(dCur(p))) << 32) | uint64_t(idx + 1));
+        return;
+    }
+#else
+    if (pc.mode == 0) { zbuf[idx] = 0u; idbuf[idx] = 0xFFFFFFFFu; return; }
+    if (pc.mode == 1 || pc.mode == 2) {
+        ivec2 q = ivec2(floor(vec2(p) + 0.5 + (1.0 - pc.t) * mvAt(p)));
+        if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(pc.dw, pc.dh)))) return;
+        uint key = floatBitsToUint(dCur(p)); int qi = q.y * pc.dw + q.x;
+        if (pc.mode == 1) atomicMax(zbuf[qi], key); else if (zbuf[qi] == key) idbuf[qi] = uint(idx);
+        return;
+    }
+#endif
+    uint id = srcId(idx); vec4 col; vec4 fA = vec4(0), fB = vec4(0), fF = vec4(0), fM = vec4(0.5, 0.5, 0.5, 1.0);   // neural-corrector features (debug views 5..8, dataset generation only)
+    if (id != 0xFFFFFFFFu) {
+        ivec2 s = ivec2(int(id) % pc.dw, int(id) / pc.dw); vec2 mvw = mvAt(s); vec2 c = vec2(p) + 0.5;
+        vec2 p1 = c - (1.0 - pc.t) * mvw, p0 = c + pc.t * mvw;   // where this surface point is in F1 / F0 (sub-pixel)
+        vec4 a = fetch(hudPrev, p0), b = fetch(hudCur, p1);
+        float dc = dCur(s), dp = dPrev(p0); int variant = (pc.pad0 >> 1) & 7;
+        fA = a; fB = b; fF = vec4(1.0, consistent(dc, dp) ? 1.0 : 0.0, 0.0, 1.0); fM = vec4(clamp(mvw / 64.0 + 0.5, 0.0, 1.0), clamp((dc - dp) / max(dc, 1e-6) * 0.5 + 0.5, 0.0, 1.0), 1.0);
+        if (consistent(dc, dp)) col = mix(a, b, pc.t);
+        else if (variant == 1) col = pc.t < 0.5 ? a : b;                   // unmodelled change: the temporally nearest frame
+        else if (variant == 2) col = (dp <= dc && pc.t < 0.5) ? a : b;     // F0 shows a farther surface here (not an occluder): nearest frame; occluded in F0: F1 only
+        else col = b;
+    } else {
+        // background neighbour search by growing rings (1..8 px): stop one ring after the first valid pixel was found - cracks of 1-2 px (the common case) cost 8-16 reads instead of 289,
+        // while the extra ring still lets a larger hole prefer the farther (background) surface over the foreground edge it touches.
+        float best = 1e30; ivec2 bs = ivec2(-1); int stopAt = 9;
+        for (int r = 1; r <= 8 && r < stopAt; ++r) {
+            for (int dy = -r; dy <= r; ++dy) for (int dx = -r; dx <= r; ++dx) { if (max(abs(dx), abs(dy)) != r) continue; ivec2 q = p + ivec2(dx, dy); if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(pc.dw, pc.dh)))) continue;
+                uint nid = srcId(q.y * pc.dw + q.x); if (nid == 0xFFFFFFFFu) continue; ivec2 ns = ivec2(int(nid) % pc.dw, int(nid) / pc.dw); float dd = dCur(ns); if (dd < best) { best = dd; bs = ns; } }
+            if (bs.x >= 0 && stopAt == 9) stopAt = r + 4;
+        }
+        col = bs.x < 0 ? texelFetch(hudCur, p, 0) : fetch(hudPrev, vec2(p) + 0.5 + mvAt(bs));
+        fA = col; fB = texelFetch(hudCur, p, 0); fF = vec4(0.0, 0.0, bs.x >= 0 ? 1.0 : 0.0, 1.0); fM = vec4(clamp((bs.x >= 0 ? mvAt(bs) : vec2(0.0)) / 64.0 + 0.5, 0.0, 1.0), 0.5, 1.0);
+    }
+    // UI: delta = final - world-only at this pixel. Translucent overlays (chat/hotbar backgrounds) have a small delta and are re-applied additively on top of the generated world;
+    // opaque UI (icons, text, items) has a large delta and is taken from the real frame as is.
+    vec4 fin = texelFetch(finalCur, p, 0), hud = texelFetch(hudCur, p, 0); vec3 delta = fin.rgb - hud.rgb; float mag = max(abs(delta.r), max(abs(delta.g), abs(delta.b)));
+    if (mag > 2.0 / 255.0) {
+        if (all(lessThanEqual(delta, vec3(0.5 / 255.0))) && min(hud.r, min(hud.g, hud.b)) > 0.03)
+            col = vec4(clamp(col.rgb * (fin.rgb / max(hud.rgb, vec3(1.0 / 255.0))), 0.0, 1.0), 1.0);   // darkening overlay (chat/hotbar/tooltip backgrounds are black with alpha): fin = (1-a)*world, so the same factor applies to the generated world
+        else col = vec4(mix(clamp(col.rgb + delta, 0.0, 1.0), fin.rgb, smoothstep(0.30, 0.45, mag)), 1.0);   // brightening/coloured overlay: additive for faint ones, the real pixel for strong (opaque) ones
+    }
+    if (pc.pad1 == 1) col = vec4(float(srcId(idx) != 0xFFFFFFFFu), 0.0, float(dCur(p) == 0.0), 1.0);
+    if (pc.pad1 == 3) col = vec4(abs(mvAt(p)) / 8.0, float(srcId(idx) == 0xFFFFFFFFu), 1.0);   // debug view: |mv|, hole flag
+    if (pc.pad1 == 5) col = fA;
+    if (pc.pad1 == 6) col = fB;
+    if (pc.pad1 == 7) col = fF;
+    if (pc.pad1 == 8) col = fM;
+    imageStore(outImg, p, vec4(col.rgb, 1.0));
+}

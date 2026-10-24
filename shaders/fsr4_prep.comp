@@ -1,0 +1,90 @@
+#version 450
+// Input preparation for the FSR bridge (runs inside Minecraft's Vulkan queue):
+//  * copies Minecraft's D32F reversed-Z depth into the shared R32F depth plane
+//  * builds camera-reprojection motion vectors (pixels at render resolution, prev - cur, un-jittered), which Minecraft
+//    does not provide.
+//  * per-entity RIGID-BODY motion vectors: a pixel whose reconstructed world position lies inside an entity's bounding box takes that entity's
+//    frame-to-frame motion (translation + yaw about its pivot, from the interpolated render transforms). Limitation (documented): bounding-box
+//    classification and no skeletal animation - limbs/heads swinging relative to the body are not captured.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D uDepth;                    // Minecraft depth (GENERAL layout)
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D oDepth;      // shared depth plane
+layout(set = 0, binding = 2, rg16f) uniform writeonly image2D oMv;        // shared motion-vector plane
+layout(push_constant) uniform PC { uint mode; } pc;   // 0 = world pass (depth + camera-reprojection motion vectors), 1 = first-person hand overlay, 2 = particles (one workgroup per particle)
+struct Ent {
+    vec4 pivot;   // xyz = entity position, camera-relative (current frame); w = yaw change prev->cur in radians (Minecraft convention, clockwise positive)
+    vec4 off;     // xyz = bounding-box centre minus pivot
+    vec4 hlf;     // xyz = bounding-box half extents (slightly inflated)
+    vec4 d;       // xyz = pivot(cur) - pivot(prev) in world space
+};
+layout(set = 0, binding = 3) uniform Params {
+    mat4 invVpJit;   // inverse(projJittered * viewRotation): pixel (jittered) -> camera-relative world
+    mat4 prevVp;     // previous frame, un-jittered projection * viewRotation
+    mat4 curVp;      // current frame, un-jittered
+    vec4 camDelta;   // xyz = cameraPos(cur) - cameraPos(prev); w = particle count (mode 2)
+    vec4 size;       // x,y = render size in pixels, z = entity count, w = 1: legacy (mirrored) Y convention
+    Ent ents[48];
+} u;
+// Particles (session 10): Minecraft's particle quads carry no motion vector and write no depth (translucent ones), so a flame/smoke/dust pixel inherits the background's camera motion.
+// The CPU lists every visible quad particle (camera-relative centre, displacement since the previous rendered frame, half-extent in pixels); mode 2 runs one workgroup per particle and,
+// for the pixels inside the particle's (shrunk) disc that are in FRONT of the depth buffer, writes the particle's own depth and full motion vector (camera + particle displacement).
+struct Part { vec4 a; vec4 b; };   // a.xyz = camera-relative centre, a.w = half extent X (px); b.xyz = displacement prev->cur (world), b.w = half extent Y (px)
+layout(std430, set = 0, binding = 4) readonly buffer Particles { Part parts[]; };
+void particles() {
+    uint pi = gl_WorkGroupID.x; if (pi >= uint(u.camDelta.w)) return;
+    ivec2 sz = ivec2(u.size.xy); float ys = u.size.w > 0.5 ? -1.0 : 1.0;
+    Part q = parts[pi]; vec3 rel = q.a.xyz; vec2 hf = max(vec2(q.a.w, q.b.w), vec2(0.5));
+    vec4 c = u.curVp * vec4(rel, 1.0); if (c.w <= 1.0e-4) return;
+    vec2 ndc = vec2(c.x, ys * c.y) / c.w; float dpart = c.z / c.w;
+    vec4 pp = u.prevVp * vec4(rel + u.camDelta.xyz - q.b.xyz, 1.0); if (pp.w <= 1.0e-4) return;
+    vec2 mv = (vec2(pp.x, ys * pp.y) / pp.w - ndc) * 0.5 * vec2(sz);
+    if (any(isnan(mv)) || any(isinf(mv))) return;
+    vec2 cpx = (ndc * 0.5 + 0.5) * vec2(sz); hf = min(hf, vec2(96.0));
+    ivec2 lo = max(ivec2(floor(cpx - hf)), ivec2(0)), hi = min(ivec2(ceil(cpx + hf)), sz - 1);
+    for (int y = lo.y + int(gl_LocalInvocationID.y); y <= hi.y; y += 8) for (int x = lo.x + int(gl_LocalInvocationID.x); x <= hi.x; x += 8) {
+        vec2 dd = (vec2(x, y) + 0.5 - cpx) / hf; if (dot(dd, dd) > 0.5) continue;   // inscribed disc, ~70 % of the half extent: sprites are mostly round/soft and their corners are transparent
+        float ds = texelFetch(uDepth, ivec2(x, y), 0).r;
+        if (dpart >= ds * 0.995) { imageStore(oDepth, ivec2(x, y), vec4(dpart, 0.0, 0.0, 0.0)); imageStore(oMv, ivec2(x, y), vec4(mv, 0.0, 0.0)); }
+    }
+}
+void main() {
+    if (pc.mode == 2u) { particles(); return; }
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz = ivec2(u.size.xy);
+    if (p.x >= sz.x || p.y >= sz.y) return;
+    float d = texelFetch(uDepth, p, 0).r;
+    if (pc.mode == 1u) {
+        // Run AFTER Minecraft drew the hand: the depth buffer was cleared to 0 (reversed-Z) before the hand, so d > 0 marks hand pixels only.
+        // The hand is locked to the camera: zero motion, its own depth.
+        if (d > 0.0) { imageStore(oDepth, p, vec4(d, 0.0, 0.0, 0.0)); imageStore(oMv, p, vec4(0.0)); }
+        return;
+    }
+    imageStore(oDepth, p, vec4(d, 0.0, 0.0, 0.0));
+    // Minecraft's Vulkan render targets are stored bottom-up (row 0 = bottom, verified by reconstructing a known entity from the depth plane): image-row NDC = +matrix NDC.
+    // size.w = 1 selects the previous (mirrored) convention, kept only for before/after measurements.
+    float ys = u.size.w > 0.5 ? -1.0 : 1.0;
+    vec2 ndc = (vec2(p) + 0.5) / vec2(sz) * 2.0 - 1.0;   // image convention (Y down)
+    vec4 w = u.invVpJit * vec4(ndc.x, ys * ndc.y, d, 1.0);
+    vec3 rel = w.xyz / w.w;
+    vec4 pc = u.curVp * vec4(rel, 1.0);
+    vec3 prevRel = rel + u.camDelta.xyz;   // static world: same point relative to the previous camera
+    int best = -1; float bestScore = 1.0e9;
+    for (int i = 0; i < int(u.size.z); ++i) {
+        vec3 q = rel - u.ents[i].pivot.xyz - u.ents[i].off.xyz;
+        vec3 r = abs(q) / u.ents[i].hlf.xyz;
+        float sc = max(r.x, max(r.y, r.z));
+        if (sc <= 1.0 && sc < bestScore) { bestScore = sc; best = i; }
+    }
+    if (best >= 0) {
+        vec3 q = rel - u.ents[best].pivot.xyz;
+        float a = u.ents[best].pivot.w, c = cos(a), s = sin(a);
+        vec3 qp = vec3(q.x * c + q.z * s, q.y, -q.x * s + q.z * c);   // undo the yaw rotation
+        prevRel = u.ents[best].pivot.xyz + qp - u.ents[best].d.xyz + u.camDelta.xyz;
+    }
+    vec4 pp = u.prevVp * vec4(prevRel, 1.0);
+    vec2 curNdc = vec2(pc.x, ys * pc.y) / pc.w;      // back to image-row convention
+    vec2 prevNdc = vec2(pp.x, ys * pp.y) / pp.w;
+    vec2 mv = (prevNdc - curNdc) * 0.5 * vec2(sz);
+    if (any(isnan(mv)) || any(isinf(mv))) mv = vec2(0.0);
+    imageStore(oMv, p, vec4(mv, 0.0, 0.0));
+}

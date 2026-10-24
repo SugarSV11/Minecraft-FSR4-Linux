@@ -1,0 +1,7 @@
+disocclusion  n= 30 PSNR 34.83 dB | gross-error px (>=16 levels)  0.88 % of pixels carry  87.8 % of the squared error | perfect denoiser (<16 removed): 35.41 dB | perfect gross-error fixer: 44.24 dB
+transparency  n= 30 PSNR 36.30 dB | gross-error px (>=16 levels)  0.77 % of pixels carry  75.3 % of the squared error | perfect denoiser (<16 removed): 37.55 dB | perfect gross-error fixer: 42.57 dB
+particles     n= 30 PSNR 21.76 dB | gross-error px (>=16 levels)  8.50 % of pixels carry  98.7 % of the squared error | perfect denoiser (<16 removed): 21.81 dB | perfect gross-error fixer: 40.78 dB
+animals       n= 30 PSNR 30.95 dB | gross-error px (>=16 levels)  1.82 % of pixels carry  91.5 % of the squared error | perfect denoiser (<16 removed): 31.35 dB | perfect gross-error fixer: 42.41 dB
+water         n= 30 PSNR 37.33 dB | gross-error px (>=16 levels)  0.49 % of pixels carry  82.6 % of the squared error | perfect denoiser (<16 removed): 38.18 dB | perfect gross-error fixer: 45.33 dB
+vegetation    n= 30 PSNR 34.26 dB | gross-error px (>=16 levels)  1.41 % of pixels carry  80.0 % of the squared error | perfect denoiser (<16 removed): 35.23 dB | perfect gross-error fixer: 41.37 dB
+baseline      n= 30 PSNR 35.92 dB | gross-error px (>=16 levels)  0.99 % of pixels carry  71.7 % of the squared error | perfect denoiser (<16 removed): 37.39 dB | perfect gross-error fixer: 41.56 dB

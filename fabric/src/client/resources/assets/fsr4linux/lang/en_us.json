@@ -1,0 +1,8 @@
+{
+	"key.category.fsr4linux.main": "FSR Upscaling",
+	"key.fsr4linux.version": "FSR: switch version (3.1.5 / 4.1.1)",
+	"key.fsr4linux.quality": "FSR: cycle quality mode",
+	"key.fsr4linux.toggle": "FSR: enable / disable",
+	"key.fsr4linux.framegen": "FSR Frame Generation: enable / disable",
+	"key.fsr4linux.settings": "FSR: open settings"
+}

@@ -1,0 +1,28 @@
+#version 450
+#extension GL_KHR_cooperative_matrix : enable
+#extension GL_KHR_memory_scope_semantics : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+// Same GEMM, but each subgroup computes a 32x32 block (2x2 cooperative-matrix tiles): every loaded A/B tile is reused twice. Needs M and N multiples of 32.
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer A { float16_t a[]; };
+layout(set = 0, binding = 1) readonly buffer B { float16_t b[]; };
+layout(set = 0, binding = 2) writeonly buffer C { float c[]; };
+layout(push_constant) uniform P { uint M, N, K; } p;
+void main() {
+    uint blocksN = p.N / 32; uint blk = gl_WorkGroupID.x; uint bm = blk / blocksN, bn = blk % blocksN;
+    if (bm * 32 >= p.M) return;
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> c00 = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0), c01 = c00, c10 = c00, c11 = c00;
+    for (uint k = 0; k < p.K; k += 16) {
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a0, a1;
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> b0, b1;
+        coopMatLoad(a0, a, (bm * 32) * p.K + k, p.K, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(a1, a, (bm * 32 + 16) * p.K + k, p.K, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(b0, b, k * p.N + bn * 32, p.N, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(b1, b, k * p.N + bn * 32 + 16, p.N, gl_CooperativeMatrixLayoutRowMajor);
+        c00 = coopMatMulAdd(a0, b0, c00); c01 = coopMatMulAdd(a0, b1, c01); c10 = coopMatMulAdd(a1, b0, c10); c11 = coopMatMulAdd(a1, b1, c11);
+    }
+    coopMatStore(c00, c, (bm * 32) * p.N + bn * 32, p.N, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c01, c, (bm * 32) * p.N + bn * 32 + 16, p.N, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c10, c, (bm * 32 + 16) * p.N + bn * 32, p.N, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(c11, c, (bm * 32 + 16) * p.N + bn * 32 + 16, p.N, gl_CooperativeMatrixLayoutRowMajor);
+}

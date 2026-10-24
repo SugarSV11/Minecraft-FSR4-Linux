@@ -1,0 +1,8 @@
+scene           n | G dB | oracle-select {G,c0,c1,blend} dB | gross px %  | share of gross px where NO candidate is within 16 levels
+baseline       33 | 35.26 | 41.66 |  1.12 |  24.9
+vegetation     33 | 33.68 | 39.47 |  1.55 |  29.6
+water          33 | 36.57 | 45.85 |  0.53 |  14.0
+animals        33 | 29.83 | 36.12 |  2.19 |  32.5
+disocclusion   33 | 33.80 | 45.13 |  1.04 |  15.0
+transparency   33 | 35.59 | 43.50 |  0.87 |  17.4
+particles      33 | 21.57 | 25.44 |  8.78 |  49.0

@@ -1,0 +1,71 @@
+build/
+fabric/build/
+fabric/.gradle/
+fabric/run/
+fabric/.kotlin/
+*.exe
+*.ppm
+docs/evidence/vulkaninfo_full.txt
+logs/
+dist/
+fabric/run-jar/
+fabric/run-compat/
+fabric/run-compat-jar/
+
+# Modelos neuronales privados
+tools/ai/neural/runs/
+*.pt
+*.pth
+*.ckpt
+
+# JAR experimentales y respaldos
+release/
+*.jar
+!fabric/gradle/wrapper/gradle-wrapper.jar
+
+# Archivos temporales
+__pycache__/
+*.pyc
+
+# Evidencias pendientes de revisión
+benchmarks/
+docs/evidence/
+
+# Parches internos
+uncommitted-changes-*.patch
+
+# Configuraciones privadas
+.env
+.env.*
+*.key
+
+# Modelos neuronales privados
+tools/ai/neural/runs/
+*.pt
+*.pth
+*.ckpt
+
+# JAR experimentales y respaldos
+release/
+*.jar
+!fabric/gradle/wrapper/gradle-wrapper.jar
+
+# Archivos temporales
+__pycache__/
+*.pyc
+
+# Evidencias pendientes de revisión
+benchmarks/
+docs/evidence/
+
+# Parches internos
+uncommitted-changes-*.patch
+
+# Configuraciones privadas
+.env
+.env.*
+*.key
+
+# Binarios nativos pendientes de revisión para publicación
+fabric/src/main/resources/dev/fsr4linux/bootstrap/*.dll
+fabric/src/main/resources/dev/fsr4linux/bootstrap/*.so

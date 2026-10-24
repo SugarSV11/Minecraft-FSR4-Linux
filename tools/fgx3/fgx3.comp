@@ -1,0 +1,52 @@
+#version 450
+// FG x3 PROTOTYPE (own backend, NOT AMD FG): forward-splat motion-vector interpolation of an intermediate frame at time t in (0,1) between real frames F0 and F1.
+// Inputs (all "upright", pixels): colour F0/F1 (RGBA8), depth F0/F1 (reversed-Z float), mv1 = motion of every F1 pixel back to F0 (prev - cur) over the WHOLE F0->F1 interval.
+// mode 0 clear | 1 splat nearest depth per target pixel (atomicMax) | 2 record the winning source pixel | 3 resolve colour, holes filled from the background neighbour's F0 position.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, set = 0, binding = 0) readonly buffer C0 { uint c0[]; };
+layout(std430, set = 0, binding = 1) readonly buffer C1 { uint c1[]; };
+layout(std430, set = 0, binding = 2) readonly buffer D0 { float d0[]; };
+layout(std430, set = 0, binding = 3) readonly buffer D1 { float d1[]; };
+layout(std430, set = 0, binding = 4) readonly buffer MV { vec2 mv[]; };
+layout(std430, set = 0, binding = 5) buffer OUT { uint outc[]; };
+layout(std430, set = 0, binding = 6) buffer Z { uint zbuf[]; };
+layout(std430, set = 0, binding = 7) buffer ID { uint idbuf[]; };
+layout(push_constant) uniform PC { int w, h, mode; float t; } pc;
+vec4 unpack(uint v) { return vec4(float(v & 255u), float((v >> 8) & 255u), float((v >> 16) & 255u), 255.0); }
+uint pack(vec4 c) { c = clamp(c + 0.5, 0.0, 255.0); return uint(c.x) | (uint(c.y) << 8) | (uint(c.z) << 16) | (255u << 24); }
+vec4 bil(bool first, vec2 p) {   // bilinear fetch, clamped
+    p -= 0.5; ivec2 i = ivec2(floor(p)); vec2 f = p - vec2(i); vec4 r = vec4(0);
+    for (int k = 0; k < 4; ++k) { ivec2 q = clamp(i + ivec2(k & 1, k >> 1), ivec2(0), ivec2(pc.w - 1, pc.h - 1)); float wt = ((k & 1) != 0 ? f.x : 1.0 - f.x) * ((k >> 1) != 0 ? f.y : 1.0 - f.y);
+        uint v = first ? c0[q.y * pc.w + q.x] : c1[q.y * pc.w + q.x]; r += wt * unpack(v); }
+    return r;
+}
+float dep0(vec2 p) { ivec2 q = clamp(ivec2(floor(p)), ivec2(0), ivec2(pc.w - 1, pc.h - 1)); return d0[q.y * pc.w + q.x]; }
+bool consistent(float dNow, float dPrev) { return abs(dNow - dPrev) <= 0.15 * max(dNow, dPrev) + 1e-7; }   // same surface (reversed-Z: depth ~ 1/z)
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy); if (p.x >= pc.w || p.y >= pc.h) return; int idx = p.y * pc.w + p.x;
+    if (pc.mode == 0) { zbuf[idx] = 0u; idbuf[idx] = 0xFFFFFFFFu; return; }
+    if (pc.mode == 1 || pc.mode == 2) {
+        ivec2 q = ivec2(floor(vec2(p) + 0.5 + (1.0 - pc.t) * mv[idx]));
+        if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(pc.w, pc.h)))) return;
+        uint key = floatBitsToUint(d1[idx]);
+        if (pc.mode == 1) atomicMax(zbuf[q.y * pc.w + q.x], key); else if (zbuf[q.y * pc.w + q.x] == key) idbuf[q.y * pc.w + q.x] = uint(idx);
+        return;
+    }
+    // resolve
+    uint id = idbuf[idx]; vec4 col; bool hole = id == 0xFFFFFFFFu;
+    if (!hole) {
+        // gather at sub-pixel positions along the winner's motion (the splat itself only decides WHICH surface owns the pixel, it is quantised to whole pixels)
+        vec2 mvw = mv[id]; vec2 c = vec2(p) + 0.5;
+        vec2 p1 = c - (1.0 - pc.t) * mvw, p0 = c + pc.t * mvw;   // where this surface point is in F1 / F0
+        vec4 a = bil(true, p0), b = bil(false, p1);
+        col = consistent(d1[id], dep0(p0)) ? mix(a, b, pc.t) : b;   // F0 occluded/disoccluded there: trust F1 only
+    } else {
+        // hole: pick the farthest (smallest reversed-Z) valid neighbour in a 17x17 window = background, and read F0 where that background was
+        float best = 1e30; ivec2 bs = ivec2(-1);
+        for (int dy = -8; dy <= 8; ++dy) for (int dx = -8; dx <= 8; ++dx) { ivec2 q = p + ivec2(dx, dy); if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(pc.w, pc.h)))) continue;
+            uint nid = idbuf[q.y * pc.w + q.x]; if (nid == 0xFFFFFFFFu) continue; float dd = d1[nid]; if (dd < best) { best = dd; bs = ivec2(nid % uint(pc.w), nid / uint(pc.w)); } }
+        if (bs.x < 0) col = unpack(c1[idx]);
+        else col = bil(true, vec2(p) + 0.5 + mv[bs.y * pc.w + bs.x]);
+    }
+    outc[idx] = pack(col);
+}

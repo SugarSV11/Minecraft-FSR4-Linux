@@ -1,0 +1,17 @@
+{
+	"required": true,
+	"package": "dev.fsr4linux.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"GameRendererMixin",
+		"MinecraftMixin",
+		"SingleQuadParticleMixin",
+		"ParticleEngineMixin",
+		"SkyRendererMixin",
+		"VulkanBackendMixin",
+		"VulkanGpuSurfaceMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

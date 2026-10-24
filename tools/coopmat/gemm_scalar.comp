@@ -1,0 +1,14 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+// Conventional compute baseline: one thread per output element, fp16 operands, fp32 accumulation. No shared-memory tiling (deliberately simple; see docs/AI_RESEARCH.md).
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) readonly buffer A { float16_t a[]; };
+layout(set = 0, binding = 1) readonly buffer B { float16_t b[]; };
+layout(set = 0, binding = 2) writeonly buffer C { float c[]; };
+layout(push_constant) uniform P { uint M, N, K; } p;
+void main() {
+    uint id = gl_GlobalInvocationID.x; if (id >= p.M * p.N) return;
+    uint m = id / p.N, n = id % p.N; float acc = 0.0;
+    for (uint k = 0; k < p.K; ++k) acc += float(a[m * p.K + k]) * float(b[k * p.N + n]);
+    c[id] = acc;
+}
