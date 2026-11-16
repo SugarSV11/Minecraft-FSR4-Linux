@@ -59,7 +59,7 @@ class UpscaleControllerTest {
 
 	@Test void toggleOnAndOff() {
 		c.requestToggle(); frame();
-		assertEquals("FSR ACTIVADO | FSR 3.1.5 | QUALITY", last());
+		assertEquals("FSR ACTIVANDO... | FSR 3.1.5 | QUALITY", last());   // "ACTIVO" solo se anuncia cuando el renderer demuestra que el backend corrio
 		assertTrue(c.isActive());
 		c.requestToggle(); frame();
 		assertEquals("FSR DESACTIVADO", last());
