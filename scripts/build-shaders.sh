@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
-# Compiles shaders/*.comp to SPIR-V (glslc from the toolbox) and embeds them as C arrays in native/generated/.
+# Compiles shaders/*.comp to SPIR-V (glslc del sistema, o de la toolbox de Fedora si no esta instalado) and embeds them as C arrays in native/generated/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-toolbox run -c fedora-toolbox-42 bash -c 'cd '"$PWD"' && mkdir -p build native/generated && for f in shaders/*.comp; do b=$(basename $f .comp); glslc --target-env=vulkan1.1 -O $f -o build/$b.spv; done; glslc --target-env=vulkan1.1 -O -DINT64=1 shaders/fgx3.comp -o build/fgx3i64.spv; glslc --target-env=vulkan1.1 -O -DC=8 shaders/neural_sel.comp -o build/neural_sel8.spv'
+compile_shaders() {
+  mkdir -p build native/generated
+  for f in shaders/*.comp; do
+    b=$(basename "$f" .comp)
+    glslc --target-env=vulkan1.1 -O "$f" -o "build/$b.spv"
+  done
+  glslc --target-env=vulkan1.1 -O -DINT64=1 shaders/fgx3.comp -o build/fgx3i64.spv
+  glslc --target-env=vulkan1.1 -O -DC=8 shaders/neural_sel.comp -o build/neural_sel8.spv
+}
+if command -v glslc >/dev/null 2>&1; then
+  compile_shaders                       # glslc instalado en el sistema (shaderc / Vulkan SDK)
+else
+  toolbox run -c fedora-toolbox-42 bash -c "cd $PWD && $(declare -f compile_shaders) && compile_shaders"
+fi
 for f in build/*.spv; do
   b=$(basename "$f" .spv)
   python3 -I - "$f" "native/generated/${b}_spv.h" "$b" <<'PY'
