@@ -49,13 +49,13 @@ int main() {
             if (cs.fg) { float fx0 = 100.f + 12.f * tm; if (x >= fx0 && x < fx0 + 40 && y >= 60 && y < 100) { v = 220.f - 2.f * (float)(x - (uint32_t)fx0); *depthOut = 0.01f; *mvx = -12.f; } } return v; };
         // frame 0 (previous) then frame 1 (current): same upload path as in the game (world-only colour, depth, MV)
         for (int fr = 0; fr < 2; ++fr) {
-            for (uint32_t y = 0; y < H; ++y) for (uint32_t x = 0; x < W; ++x) { float d, m; float v = world((float)fr, x, y, &d, &m); uint8_t c = (uint8_t)fminf(255.f, fmaxf(0.f, v)); memcpy(host + ((size_t)y * W + x) * 4, (uint8_t[]){c, c, c, 255}, 4); }
+            for (uint32_t y = 0; y < H; ++y) for (uint32_t x = 0; x < W; ++x) { float d, m; float v = world((float)fr, x, y, &d, &m); uint8_t c = (uint8_t)fminf(255.f, fmaxf(0.f, v)); { uint8_t px[4] = {c, c, c, 255}; memcpy(host + ((size_t)y * W + x) * 4, px, 4); } }
             upload(mcColor, 4);
             run([&](VkCommandBuffer cb) { pass.recordHudless(cb, mcColor); });
             for (uint32_t y = 0; y < H; ++y) for (uint32_t x = 0; x < W; ++x) { float d, m; world((float)fr, x, y, &d, &m); ((float*)host)[y * W + x] = d; } upload(depth, 4);
             for (uint32_t y = 0; y < H; ++y) for (uint32_t x = 0; x < W; ++x) { float d, m; world((float)fr, x, y, &d, &m); ((uint16_t*)host)[(y * W + x) * 2] = f2h(fr && !getenv("FGX3_TEST_BADMV") ? m : 0.f); ((uint16_t*)host)[(y * W + x) * 2 + 1] = 0; } upload(mv, 4);
             if (fr == 1) {   // final colour = world + a HUD block that exists only here
-                for (uint32_t y = 0; y < H; ++y) for (uint32_t x = 0; x < W; ++x) { float d, m; float v = world(1.f, x, y, &d, &m); uint8_t c = (uint8_t)fminf(255.f, fmaxf(0.f, v)); if (cs.tui && x >= 100 && x < 220 && y >= 20 && y < 70) { uint8_t cc = (uint8_t)(0.5f * c); memcpy(host + ((size_t)y * W + x) * 4, (uint8_t[]){cc, cc, cc, 255}, 4); } else if (x >= 8 && x < 72 && y >= 140 && y < 172) { host[((size_t)y * W + x) * 4] = 255; host[((size_t)y * W + x) * 4 + 1] = 0; host[((size_t)y * W + x) * 4 + 2] = 0; host[((size_t)y * W + x) * 4 + 3] = 255; } else memcpy(host + ((size_t)y * W + x) * 4, (uint8_t[]){c, c, c, 255}, 4); }
+                for (uint32_t y = 0; y < H; ++y) for (uint32_t x = 0; x < W; ++x) { float d, m; float v = world(1.f, x, y, &d, &m); uint8_t c = (uint8_t)fminf(255.f, fmaxf(0.f, v)); if (cs.tui && x >= 100 && x < 220 && y >= 20 && y < 70) { uint8_t cc = (uint8_t)(0.5f * c); { uint8_t px[4] = {cc, cc, cc, 255}; memcpy(host + ((size_t)y * W + x) * 4, px, 4); } } else if (x >= 8 && x < 72 && y >= 140 && y < 172) { host[((size_t)y * W + x) * 4] = 255; host[((size_t)y * W + x) * 4 + 1] = 0; host[((size_t)y * W + x) * 4 + 2] = 0; host[((size_t)y * W + x) * 4 + 3] = 255; } else { uint8_t px[4] = {c, c, c, 255}; memcpy(host + ((size_t)y * W + x) * 4, px, 4); } }
                 upload(mcFinal, 4);
                 for (int idx = 1; idx <= 2; ++idx) {
                     bool ok = false; run([&](VkCommandBuffer cb) { ok = pass.recordGenerate(cb, mcFinal, idx, dst); }); if (!ok) { printf("recordGenerate refused\n"); return 4; }
