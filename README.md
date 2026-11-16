@@ -72,7 +72,7 @@ La configuración se guarda sola en `config/fsr4linux.json`.
 | JDK | 25 | Compilar el mod (Loom) |
 | CMake + Ninja | 3.20 / 1.11 | Biblioteca nativa |
 | GCC o Clang | 13 / 16 | C++20 |
-| mingw-w64 | con cabeceras D3D12 recientes (`ID3D12Device3`) | Compilar el helper de Windows (`fsr4_bridge.exe`). El mingw-w64 11.0.1 de Ubuntu 24.04 **no basta**; se usó la toolbox de Fedora 42 |
+| mingw-w64 | con cabeceras D3D12 recientes (`ID3D12Device3`) | Compilar el helper de Windows (`fsr4_bridge.exe`). El mingw-w64 11.0.1 de Ubuntu 24.04 **no basta**; el proyecto se desarrolló con la toolbox de Fedora 42 |
 | GE-Proton | reciente | Wine + VKD3D-Proton, en `~/.steam/steam/compatibilitytools.d/` |
 
 ### 2. Dependencias externas (una sola vez)
