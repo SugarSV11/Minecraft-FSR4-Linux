@@ -76,7 +76,8 @@ tasks.register('verifyBundledJar') {
 
 tasks.named('jar') { dependsOn tasks.named('prepareBundledResources') }
 tasks.named('check') { dependsOn tasks.named('verifyBundledJar') }
-tasks.named('remapJar') { dependsOn tasks.named('verifyBundledJar') }
+// Minecraft 26.x is unobfuscated: current Loom versions have no remapJar task. Hook it only when it exists.
+tasks.matching { it.name == 'remapJar' }.configureEach { dependsOn tasks.named('verifyBundledJar') }
 
 repositories {
 	// Add repositories to retrieve artifacts from in here.
