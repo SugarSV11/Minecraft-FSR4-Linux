@@ -19,7 +19,7 @@
 
 ---
 
-> 🚧 **Experimental alpha.** This is the Linux version of the same mod as the [Windows version](https://github.com/SugarSV11/FSR4.1-Minecraft-RDNA4) (sibling repo). **You must build it yourself**: there is no ready-to-install `.jar`.
+> 🚧 **Experimental alpha.** This is the Linux version of the same mod as the [Windows version](https://github.com/SugarSV11/FSR4.1-Minecraft-RDNA4) (sibling repo). An alpha `.jar` is available in [Releases](https://github.com/SugarSV11/Minecraft-FSR4-Linux/releases/tag/v0.2.0-alpha) (built by GitHub Actions, not tested in game); you can also build it yourself.
 
 ## ✨ What does it do?
 
