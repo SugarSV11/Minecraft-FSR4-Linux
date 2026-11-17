@@ -13,6 +13,6 @@ MINGW_CXX=x86_64-w64-mingw32-g++
 command -v x86_64-w64-mingw32-g++-posix >/dev/null 2>&1 && MINGW_CXX=x86_64-w64-mingw32-g++-posix
 $MINGW_CXX -std=c++17 -O2 -static -mwindows -o build/probe/fsr4_bridge.exe native/backends/fsr4/bridge/fsr4_bridge.cpp \
   -Inative/include -I"$K/api/include" -I"$K/upscalers/include" -I"$K/framegeneration/include" -ld3d12 -ldxgi -luuid
-cp -f "$FFX_PREBUILT_DIR"/amd_fidelityfx_{loader,upscaler}_dx12.dll build/probe/
+cp -f "$FFX_PREBUILT_DIR"/amd_fidelityfx_{loader,upscaler,framegeneration}_dx12.dll build/probe/
 ls -l build/lib/libfsr4linux.so build/probe/fsr4_bridge.exe
 file build/lib/libfsr4linux.so | cut -c1-120

@@ -13,7 +13,8 @@ def nativeArtifacts = [
     'libfsr4linux.so': file('../build/lib/libfsr4linux.so'),
     'fsr4_bridge.exe': file('../build/probe/fsr4_bridge.exe'),
     'amd_fidelityfx_loader_dx12.dll': file('../build/probe/amd_fidelityfx_loader_dx12.dll'),
-    'amd_fidelityfx_upscaler_dx12.dll': file('../build/probe/amd_fidelityfx_upscaler_dx12.dll')
+    'amd_fidelityfx_upscaler_dx12.dll': file('../build/probe/amd_fidelityfx_upscaler_dx12.dll'),
+    'amd_fidelityfx_framegeneration_dx12.dll': file('../build/probe/amd_fidelityfx_framegeneration_dx12.dll')
 ]
 def sha256Bytes = { byte[] bytes -> MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString() }
 
