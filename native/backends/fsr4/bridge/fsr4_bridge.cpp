@@ -7,6 +7,7 @@
 #define _WINDOWS
 #include <windows.h>
 #include <d3d12.h>
+#include "d3d12_compat.h"   // ID3D12Device2/3 for mingw-w64 < 12 (Ubuntu 24.04)
 #include <cstdio>
 #include <cstring>
 #include <string>
