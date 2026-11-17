@@ -1,0 +1,61 @@
+name: build
+
+on:
+  push:
+    branches: [main, 'wip/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencias del sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ glslc libvulkan-dev python3 g++-mingw-w64-x86-64-posix
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: SDK de AMD FidelityFX (commit fijo, no se incluye en el repo)
+        run: |
+          mkdir -p ~/.cache/fsr4-linux/prebuilt ~/.cache/fsr4-linux/vk-headers
+          cd ~/.cache/fsr4-linux
+          git clone --quiet https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git
+          git -C FidelityFX-SDK checkout --quiet 60f4ea8
+          cp FidelityFX-SDK/Kits/FidelityFX/signedbin/amd_fidelityfx_{loader,upscaler}_dx12.dll prebuilt/
+          ln -s /usr/include/vulkan vk-headers/vulkan
+
+      - name: Comprobar la ABI nativa (sin GPU)
+        run: |
+          source scripts/env.sh
+          cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build/lib"
+          cmake --build build/cmake
+          python3 -I tests/verify_abi.py
+
+      - name: Compilar helper de Windows, jar y tests Java
+        working-directory: fabric
+        run: ./gradlew build --console=plain
+
+      - name: Subir el jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-fsr4-linux-jar
+          path: |
+            fabric/build/libs/*.jar
+            !fabric/build/libs/*-sources.jar
+          if-no-files-found: error
+
+  # Los tests nativos que usan GPU o Wine (ipc_test, gpu_ipc_test, prep_test, fgx3_test, crc_stress) no corren aquí:
+  # los runners de GitHub no tienen GPU.
