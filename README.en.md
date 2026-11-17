@@ -56,7 +56,7 @@ Full list: [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
 ## 🚀 Build and install
 
-Requirements: Linux + AMD RADV (Mesa 24.2+), JDK 25, CMake 3.20+, Ninja, GCC 13+/Clang 16+, mingw-w64 with recent D3D12 headers (Ubuntu 24.04's 11.0.1 lacks `ID3D12Device3`; Fedora 42 toolbox works), GE-Proton.
+Requirements: Linux + AMD RADV (Mesa 24.2+), JDK 25, CMake 3.20+, Ninja, GCC 13+/Clang 16+, mingw-w64 11+ (`-posix` variant; Ubuntu 24.04's works thanks to `native/include/d3d12_compat.h`, Fedora too), GE-Proton.
 
 ```bash
 # one-time: external dependencies
